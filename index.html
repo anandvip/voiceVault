@@ -164,8 +164,11 @@
         function updateUserProfile(user) {
             userProfileDiv.innerHTML = `
                 <img src="${user.photoURL || 'https://upload.wikimedia.org/wikipedia/commons/7/7c/Profile_avatar_placeholder_large.png'}" alt="Profile picture">
-                <span>${user.displayName || 'User'}</span>
-                <span>${user.email || user.phoneNumber || 'No contact info'}</span>
+                <div>
+                    <span>${user.displayName || 'User'}</span>
+                    <br>
+                    <span>${user.email || 'No email available'}</span>
+                </div>
             `;
         }
 
@@ -307,7 +310,7 @@
                 })
                 .catch(error => {
                     showToast('Error deleting recording: ' + error.message, "error");
-                });
+              });
         }
 
         function openTab(evt, tabName) {
@@ -382,7 +385,7 @@
         });
 
         // Handle Firebase errors globally
-        firebase.auth().getAuth().onAuthStateChanged(user => {
+        firebase.auth().onAuthStateChanged(user => {
             if (user) {
                 user.getIdToken().then(token => {
                     // You can use this token for authenticated API calls
