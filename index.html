@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VoiceVault</title>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-storage-compat.js"></script>
+    <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/toastify-js/src/toastify.min.css">
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/toastify-js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; background-color: #f4f4f4; }
+        .container { max-width: 800px; margin: 0 auto; background-color: #fff; padding: 20px; border-radius: 5px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; }
+        button { padding: 10px 20px; margin: 10px 0; font-size: 16px; cursor: pointer; background-color: #4CAF50; color: white; border: none; border-radius: 5px; }
+        button:disabled { background-color: #cccccc; }
+        #transcriptArea { width: 100%; min-height: 200px; margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; }
+        #recordingsList, #transcriptsList { list-style-type: none; padding: 0; }
+        #recordingsList li, #transcriptsList li { margin-bottom: 10px; padding: 10px; background-color: #f9f9f9; border-radius: 5px; }
+        .tab { overflow: hidden; border: 1px solid #ccc; background-color: #f1f1f1; }
+        .tab button { background-color: inherit; float: left; border: none; outline: none; cursor: pointer; padding: 14px 16px; transition: 0.3s; }
+        .tab button:hover { background-color: #ddd; }
+        .tab button.active { background-color: #ccc; }
+        .tabcontent { display: none; padding: 6px 12px; border: 1px solid #ccc; border-top: none; }
+        #userProfile { margin-bottom: 20px; }
+        #userProfile img { width: 50px; height: 50px; border-radius: 50%; margin-right: 10px; }
+        .google-btn { background-color: #4285F4; }
+        .google-btn img { width: 20px; vertical-align: middle; margin-right: 10px; }
+        .toast-success { background: linear-gradient(to right, #00b09b, #96c93d); }
+        .toast-error { background: linear-gradient(to right, #ff5f6d, #ffc371); }
+        .toast-info { background: linear-gradient(to right, #2193b0, #6dd5ed); }
+        .toast-warning { background: linear-gradient(to right, #f2994a, #f2c94c); }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>VoiceVault</h1>
+        <div id="authContainer">
+            <input type="email" id="email" placeholder="Email">
+            <input type="password" id="password" placeholder="Password">
+            <button id="signIn">Sign In</button>
+            <button id="signUp">Sign Up</button>
+            <button id="googleSignIn" class="google-btn">
+                <img src="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg" alt="Google logo">
+                Continue with Google
+            </button>
+        </div>
+        <div id="appContainer" style="display:none;">
+            <div id="userProfile"></div>
+            <button id="signOut">Sign Out</button>
+            <div class="tab">
+                <button class="tablinks" onclick="openTab(event, 'Record')">Record</button>
+                <button class="tablinks" onclick="openTab(event, 'Recordings')">Recordings</button>
+                <button class="tablinks" onclick="openTab(event, 'Transcripts')">Transcripts</button>
+            </div>
+            <div id="Record" class="tabcontent">
+                <h2>New Recording</h2>
+                <button id="startRecording">Start Recording</button>
+                <button id="stopRecording" disabled>Stop Recording</button>
+                <div id="transcriptArea" contenteditable="true"></div>
+            </div>
+            <div id="Recordings" class="tabcontent">
+                <h2>Your Recordings</h2>
+                <ul id="recordingsList"></ul>
+            </div>
+            <div id="Transcripts" class="tabcontent">
+                <h2>Your Transcripts</h2>
+                <ul id="transcriptsList"></ul>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDFJgZEvvID06rbbWOYMr6awz82wjQXfis",
+            authDomain: "voicevault-1e11a.firebaseapp.com",
+            projectId: "voicevault-1e11a",
+            storageBucket: "voicevault-1e11a.appspot.com",
+            messagingSenderId: "23462048039",
+            appId: "1:23462048039:web:992742e0c9cc3f8489b902"
+        };
+
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const storage = firebase.storage();
+
+        // DOM elements
+        const signInButton = document.getElementById('signIn');
+        const signUpButton = document.getElementById('signUp');
+        const signOutButton = document.getElementById('signOut');
+        const googleSignInButton = document.getElementById('googleSignIn');
+        const emailInput = document.getElementById('email');
+        const passwordInput = document.getElementById('password');
+        const authContainer = document.getElementById('authContainer');
+        const appContainer = document.getElementById('appContainer');
+        const startRecordingButton = document.getElementById('startRecording');
+        const stopRecordingButton = document.getElementById('stopRecording');
+        const transcriptArea = document.getElementById('transcriptArea');
+        const recordingsList = document.getElementById('recordingsList');
+        const transcriptsList = document.getElementById('transcriptsList');
+        const userProfileDiv = document.getElementById('userProfile');
+
+        let mediaRecorder;
+        let audioChunks = [];
+        let recognition;
+
+        function showToast(message, type = 'info') {
+            Toastify({
+                text: message,
+                duration: 3000,
+                gravity: "top",
+                position: "right",
+                className: `toast-${type}`,
+            }).showToast();
+        }
+
+        // Authentication
+        signInButton.onclick = () => {
+            auth.signInWithEmailAndPassword(emailInput.value, passwordInput.value)
+                .then(() => showToast("Signed in successfully!", "success"))
+                .catch(error => showToast(error.message, "error"));
+        };
+
+        signUpButton.onclick = () => {
+            auth.createUserWithEmailAndPassword(emailInput.value, passwordInput.value)
+                .then(() => showToast("Account created successfully!", "success"))
+                .catch(error => showToast(error.message, "error"));
+        };
+
+        googleSignInButton.onclick = () => {
+            const provider = new firebase.auth.GoogleAuthProvider();
+            auth.signInWithPopup(provider)
+                .then(() => showToast("Signed in with Google successfully!", "success"))
+                .catch(error => showToast(error.message, "error"));
+        };
+
+        signOutButton.onclick = () => {
+            auth.signOut().then(() => {
+                showToast('Signed out successfully!', 'info');
+            }).catch((error) => {
+                showToast('Sign out error: ' + error.message, 'error');
+            });
+        };
+
+        auth.onAuthStateChanged(user => {
+            if (user) {
+                authContainer.style.display = 'none';
+                appContainer.style.display = 'block';
+                updateUserProfile(user);
+                loadUserData();
+                showToast(`Welcome, ${user.displayName || user.email}!`, 'success');
+            } else {
+                authContainer.style.display = 'block';
+                appContainer.style.display = 'none';
+                userProfileDiv.innerHTML = '';
+            }
+        });
+
+        function updateUserProfile(user) {
+            userProfileDiv.innerHTML = `
+                <img src="${user.photoURL || 'https://upload.wikimedia.org/wikipedia/commons/7/7c/Profile_avatar_placeholder_large.png'}" alt="Profile picture">
+                <span>${user.displayName || 'User'}</span>
+                <span>${user.email || user.phoneNumber || 'No contact info'}</span>
+            `;
+        }
+
+        // Recording
+        startRecordingButton.onclick = () => {
+            navigator.mediaDevices.getUserMedia({ audio: true })
+                .then(stream => {
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.start();
+                    audioChunks = [];
+                    mediaRecorder.addEventListener("dataavailable", event => {
+                        audioChunks.push(event.data);
+                    });
+                    mediaRecorder.onstop = () => {
+                        saveRecording();
+                    };
+                    startRecordingButton.disabled = true;
+                    stopRecordingButton.disabled = false;
+                    startSpeechRecognition();
+                    showToast("Recording started", "info");
+                })
+                .catch(error => {
+                    showToast("Error accessing microphone: " + error.message, "error");
+                });
+        };
+
+        stopRecordingButton.onclick = () => {
+            if (mediaRecorder && mediaRecorder.state !== "inactive") {
+                mediaRecorder.stop();
+                startRecordingButton.disabled = false;
+                stopRecordingButton.disabled = true;
+                stopSpeechRecognition();
+                showToast("Recording stopped", "info");
+            } else {
+                showToast("No active recording to stop", "warning");
+            }
+        };
+
+        function startSpeechRecognition() {
+            recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        transcriptArea.innerHTML += event.results[i][0].transcript + ' ';
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+            };
+            recognition.start();
+        }
+
+        function stopSpeechRecognition() {
+            if (recognition) {
+                recognition.stop();
+            }
+        }
+
+        function saveRecording() {
+            if (audioChunks.length === 0) {
+                showToast("No audio data captured", "warning");
+                return;
+            }
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            const timestamp = Date.now();
+            const fileName = `recording_${timestamp}.webm`;
+            const fileRef = storage.ref().child(`users/${auth.currentUser.uid}/${fileName}`);
+            
+            fileRef.put(audioBlob)
+                .then(() => fileRef.getDownloadURL())
+                .then(url => {
+                    return db.collection('users').doc(auth.currentUser.uid).collection('recordings').add({
+                        timestamp: timestamp,
+                        audioUrl: url,
+                        transcript: transcriptArea.innerHTML
+                    });
+                })
+                .then(() => {
+                    showToast("Recording saved successfully!", "success");
+                    transcriptArea.innerHTML = '';
+                    loadUserData();
+                })
+                .catch(error => {
+                    showToast('Error saving recording: ' + error.message, "error");
+                });
+        }
+
+        function loadUserData() {
+            db.collection('users').doc(auth.currentUser.uid).collection('recordings')
+                .orderBy('timestamp', 'desc')
+                .get()
+                .then(querySnapshot => {
+                    recordingsList.innerHTML = '';
+                    transcriptsList.innerHTML = '';
+                    querySnapshot.forEach(doc => {
+                        const data = doc.data();
+                        const recordingItem = document.createElement('li');
+                        recordingItem.innerHTML = `
+                            <p>Recording: ${new Date(data.timestamp).toLocaleString()}</p>
+                            <audio controls src="${data.audioUrl}"></audio>
+                            <button onclick="deleteRecording('${doc.id}')">Delete</button>
+                        `;
+                        recordingsList.appendChild(recordingItem);
+
+                        const transcriptItem = document.createElement('li');
+                        transcriptItem.innerHTML = `
+                            <p>Transcript: ${new Date(data.timestamp).toLocaleString()}</p>
+                            <p>${data.transcript}</p>
+                            <button onclick="deleteRecording('${doc.id}')">Delete</button>
+                        `;
+                        transcriptsList.appendChild(transcriptItem);
+                    });
+                })
+                .catch(error => {
+                    showToast('Error loading data: ' + error.message, "error");
+                });
+        }
+
+        function deleteRecording(docId) {
+            db.collection('users').doc(auth.currentUser.uid).collection('recordings').doc(docId).get()
+                .then(doc => {
+                    if (doc.exists) {
+                        const data = doc.data();
+                        const audioRef = storage.refFromURL(data.audioUrl);
+                        return Promise.all([
+                            audioRef.delete(),
+                            db.collection('users').doc(auth.currentUser.uid).collection('recordings').doc(docId).delete()
+                        ]);
+                    } else {
+                        throw new Error('Recording not found');
+                    }
+                })
+                .then(() => {
+                    showToast('Recording deleted successfully!', 'success');
+                    loadUserData();
+                })
+                .catch(error => {
+                    showToast('Error deleting recording: ' + error.message, "error");
+                });
+        }
+
+        function openTab(evt, tabName) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tabcontent");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+            }
+            tablinks = document.getElementsByClassName("tablinks");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].className = tablinks[i].className.replace(" active", "");
+            }
+            document.getElementById(tabName).style.display = "block";
+            evt.currentTarget.className += " active";
+        }
+
+        // Open the Record tab by default
+        document.addEventListener('DOMContentLoaded', function() {
+            document.getElementsByClassName("tablinks")[0].click();
+        });
+
+        // Error handling for unsupported browsers
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            showToast("Your browser doesn't support audio recording. Please try a different browser.", "error");
+            startRecordingButton.disabled = true;
+        }
+
+        // Prevent accidental page reload
+        window.onbeforeunload = function() {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                return "You're currently recording. Are you sure you want to leave?";
+            }
+        };
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(event) {
+            if (event.ctrlKey && event.key === 'b') {
+                event.preventDefault();
+                if (!startRecordingButton.disabled) {
+                    startRecordingButton.click();
+                } else if (!stopRecordingButton.disabled) {
+                    stopRecordingButton.click();
+                }
+            }
+        });
+
+        // Improve user experience
+        startRecordingButton.addEventListener('mouseenter', () => {
+            if (!startRecordingButton.disabled) {
+                showToast("Press to start recording (Ctrl+B)", "info");
+            }
+        });
+
+        stopRecordingButton.addEventListener('mouseenter', () => {
+            if (!stopRecordingButton.disabled) {
+                showToast("Press to stop recording (Ctrl+B)", "info");
+            }
+        });
+
+        // Handle network status
+        window.addEventListener('online', () => {
+            showToast("You're back online!", "success");
+        });
+
+        window.addEventListener('offline', () => {
+            showToast("You're offline. Some features may not work.", "warning");
+        });
+
+        // Improve accessibility
+        document.querySelectorAll('button').forEach(button => {
+            button.setAttribute('aria-label', button.textContent.trim());
+        });
+
+        // Handle Firebase errors globally
+        firebase.auth().getAuth().onAuthStateChanged(user => {
+            if (user) {
+                user.getIdToken().then(token => {
+                    // You can use this token for authenticated API calls
+                }).catch(error => {
+                    showToast("Error getting auth token: " + error.message, "error");
+                });
+            }
+        });
+
+        // Implement a simple caching mechanism for recordings
+        const cache = {};
+        function getCachedRecording(id) {
+            if (cache[id]) {
+                return Promise.resolve(cache[id]);
+            }
+            return db.collection('users').doc(auth.currentUser.uid).collection('recordings').doc(id).get()
+                .then(doc => {
+                    if (doc.exists) {
+                        cache[id] = doc.data();
+                        return cache[id];
+                    }
+                    throw new Error('Recording not found');
+                });
+        }
+
+        // Clear cache when user signs out
+        signOutButton.addEventListener('click', () => {
+            Object.keys(cache).forEach(key => delete cache[key]);
+        });
+
+        // Implement a simple retry mechanism for network requests
+        function retryOperation(operation, delay, times) {
+            return new Promise((resolve, reject) => {
+                return operation()
+                    .then(resolve)
+                    .catch((reason) => {
+                        if (times - 1 > 0) {
+                            return wait(delay)
+                                .then(retryOperation.bind(null, operation, delay, times - 1))
+                                .then(resolve)
+                                .catch(reject);
+                        }
+                        return reject(reason);
+                    });
+            });
+        }
+
+        function wait(delay) {
+            return new Promise((resolve) => setTimeout(resolve, delay));
+        }
+
+        // Use the retry mechanism
+        function saveRecordingWithRetry() {
+            return retryOperation(saveRecording, 1000, 3);
+        }
+
+        // Implement simple analytics
+        function logEvent(eventName, eventParams) {
+            // In a real app, you'd send this to your analytics service
+            console.log(`Event: ${eventName}`, eventParams);
+        }
+
+        startRecordingButton.addEventListener('click', () => logEvent('start_recording'));
+        stopRecordingButton.addEventListener('click', () => logEvent('stop_recording'));
+
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && mediaRecorder && mediaRecorder.state === "recording") {
+                showToast("Recording paused due to page inactive", "warning");
+                mediaRecorder.pause();
+            } else if (!document.hidden && mediaRecorder && mediaRecorder.state === "paused") {
+                showToast("Recording resumed", "info");
+                mediaRecorder.resume();
+            }
+        });
+    </script>
+</body>
+</html>
